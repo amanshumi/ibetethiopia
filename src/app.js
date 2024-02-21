@@ -1,11 +1,13 @@
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const Calendar = require("telegram-inline-calendar");
+const TenderService = require("./service/tender");
 const BOT_API_KEY = "6583487796:AAE894PwHoP6Oc26853iaFv1d2OtRS_6Qug";
 
 const bot = new TelegramBot(BOT_API_KEY, { polling: true });
 
 const botState = {};
+let messageIdForQuery = null;
 
 const regions = ['Addis Ababa', 'Afar', 'Amhara', 'Benishangul gumuz', 'Diredawa', 'Gambella', 'Harari', 'Oromia', 'Sidama', 'SNNPR', 'Somali', 'Tigray'];
 const categories = ['Accounting, finance and auditing', 'Printing, Advertising and promotion', 'Stationery materials', 'Agriculture and farming', 'Machinery and equipment', 'Architectural', 'Banking equipment and services', 'Building and warehouse', 'Chemicals and reagents', 'Medical equipment maintenance', 'Cleaning and janitorial equipment', 'Road, bridge and home construction', 'Building, warehouse and finishing materials', 'Water pipes, machinery and equipment', 'General consultancy', 'ICT and software', 'Networking', 'Electronics', 'Furniture', 'Installation and maintenance', 'Electro mechanical and electronics', 'Garment and leather', 'Medical equipment and pharmaceutical products', 'Vehicle and machinery', 'Sport materials and equipment’s'];
@@ -181,11 +183,6 @@ function promptRegion(chatId) {
             inline_keyboard: regions.map(region => [{ text: region, callback_data: region }]),
         }
     });
-    // bot.sendMessage({keyboard: [
-    //     [
-    //         { text: "back" }
-    //     ]
-    // ]})
 }
 
 function deletePrompt(chatId, messageId) {
@@ -205,25 +202,73 @@ function showBackButton(chatId, messageId) {
     });
 }
 
+const constructData = (chatId, messageId) => {
+    const tenderData = {
+        chatId: chatId,
+        messageId: messageId,
+        region: botState[chatId].region,
+        category: botState[chatId].category,
+        ownerCompany: botState[chatId].ownerCompany,
+        header: botState[chatId].header,
+        description: botState[chatId].description,
+        startBid: botState[chatId].startBid,
+        closingDate: botState[chatId].closingDate,
+        openingDate: botState[chatId].openingDate,
+        cpoAmount: botState[chatId].cpoAmount,
+        footer: botState[chatId].footer,
+        contactInfo: botState[chatId].contactInfo
+    };
+
+    return tenderData;
+}
+
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
     const data = callbackQuery.data;
 
-    if(data === "confirm_post") {
+    if (data === "confirm_post") {
         bot.answerCallbackQuery(callbackQuery.id);
+        // construct tender and save to db
+        messageIdForQuery = messageId;
+        const tenderData = constructData(chatId, messageId);
+        const savedTender = await new TenderService().addTender(tenderData);
+
         deletePrompt(chatId, callbackQuery.message.message_id);
         requestApproval(getTenderMessage(chatId), chatId);
+        bot.sendMessage(chatId, "Your post has been submitted and waiting for approval")
         return;
     }
 
-    if(data === "approve") {
+    if (data === "approve") {
         bot.answerCallbackQuery(callbackQuery.id);
+        // get the tender data by message ID from db and post it to the channel
+        const tenderData = await new TenderService().getTenderByMessageId(messageIdForQuery);
+
+        if (!tenderData.dataValues) {
+            bot.sendMessage(chatId, "Something went wrong");
+        }
+
+        const tenderMsg = `
+    **Tender Notification**
+    Region: ${tenderData.dataValues?.region}
+    Category: ${tenderData.dataValues?.category}
+    Owner Company: ${tenderData.dataValues?.ownerCompany}
+    Header: ${tenderData.dataValues?.header}
+    Description: ${tenderData.dataValues?.description}
+    Starting Bid: ${tenderData.dataValues?.startBid}
+    Closing Date: ${tenderData.dataValues?.closingDate}
+    Opening Date: ${tenderData.dataValues?.openingDate}
+    CPO Amount: ${tenderData.dataValues?.cpoAmount}
+    Footer: ${tenderData.dataValues?.footer}
+    Contact Info: ${tenderData.dataValues?.contactInfo}
+    `;
+        await sendTenderMessage(chatId, tenderMsg);
         deletePrompt(chatId, callbackQuery.message.message_id);
-        await sendTenderMessage(chatId, getTenderMessage(chatId));
         return;
     }
 
-    if(data === "reject") {
+    if (data === "reject") {
         bot.answerCallbackQuery(callbackQuery.id);
         deletePrompt(chatId, callbackQuery.message.message_id);
         bot.sendMessage(chatId, "Your post has been rejected");
