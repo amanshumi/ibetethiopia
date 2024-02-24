@@ -3,7 +3,8 @@ const TelegramBot = require("node-telegram-bot-api");
 const Calendar = require("telegram-inline-calendar");
 const TenderService = require("./service/tender");
 const CompanyService = require("./service/company");
-const BOT_API_KEY = "6583487796:AAE894PwHoP6Oc26853iaFv1d2OtRS_6Qug";
+const PreferenceService = require("./service/preference");
+const BOT_API_KEY = "6502653610:AAFjAZDBjnezQ5akPLCHppAECIrHVkF-Kgg";
 
 const bot = new TelegramBot(BOT_API_KEY,  { polling: {interval: 5000} });
 const ADMIN_USER_ID = "5038786699";
@@ -14,6 +15,10 @@ let messageIdForQuery = null;
 
 const regions = ['Addis Ababa', 'Afar', 'Amhara', 'Benishangul gumuz', 'Diredawa', 'Gambella', 'Harari', 'Oromia', 'Sidama', 'SNNPR', 'Somali', 'Tigray'];
 const categories = ['Accounting, finance and auditing', 'Printing, Advertising and promotion', 'Stationery materials', 'Agriculture and farming', 'Machinery and equipment', 'Architectural', 'Banking equipment and services', 'Building and warehouse', 'Chemicals and reagents', 'Medical equipment maintenance', 'Cleaning and janitorial equipment', 'Road, bridge and home construction', 'Building, warehouse and finishing materials', 'Water pipes, machinery and equipment', 'General consultancy', 'ICT and software', 'Networking', 'Electronics', 'Furniture', 'Installation and maintenance', 'Electro mechanical and electronics', 'Garment and leather', 'Medical equipment and pharmaceutical products', 'Vehicle and machinery', 'Sport materials and equipment’s'];
+
+const resetState = (chatId) => {
+    botState[chatId] = {action: ""}
+}
 
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
@@ -43,7 +48,7 @@ bot.on('message', (msg) => {
     const message = msg.text?.toString();
 
     if (message === "/start") {
-        botState[chatId] = {};
+        resetState(chatId);
         return;
     }
 
@@ -129,7 +134,7 @@ bot.on('message', (msg) => {
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: 'Confirm', callback_data: 'confirm_post' }],
-                            [{ text: 'Cancel', callback_data: 'cancel_post' }]
+                            [{ text: 'Cancel', callback_data: 'main_menu' }]
                         ]
                     }
                 };
@@ -140,12 +145,12 @@ bot.on('message', (msg) => {
 });
 
 function isValidAmount(amount) {
-    return /^\d+(\.\d{1,2})?$/.test(amount); // Checks if the amount is a valid number with up to 2 decimal places
+    return /^\d+(\.\d{1,2})?$/.test(amount);
 }
 
-function requestApproval(message, chatId) {
+function requestApproval(message, chatId, username) {
     botState[chatId] = message;
-    bot.sendMessage('5392036089', `New message from ${chatId}:\n\n${message}\n\nApprove or reject?`, {
+    bot.sendMessage('5392036089', `New message from ${username}:\n\n${message}\n\nApprove or reject?`, {
         reply_markup: {
             inline_keyboard: [
                 [{ text: 'Approve', callback_data: 'approve' }],
@@ -295,9 +300,29 @@ bot.on('contact', async (msg) => {
 
     if (botState[chatId]?.action === 'register_company') {
         companyData.telegram_contact = contact;
-        // handleCompanyRegister(chatId, contact, null, null);
     }
 });
+
+async function promptRegionForNotification(chatId) {
+    bot.sendMessage(chatId, 'Choose tender region (location) you want to receive notification and participate:', {
+        reply_markup: {
+            inline_keyboard: regions.map(region => [{ text: region, callback_data: `regionnotif_${region}` }])
+        }
+    });
+}
+
+async function handleRegionForNotification(chatId, region) {
+    // Save the region to preferences or handle as needed
+    const preferenceService = new PreferenceService()
+    await preferenceService.createPreference({ chatId, subscriptionType: 'region', subscriptionValue: region });
+
+    // Prompt to choose tender category
+    bot.sendMessage(chatId, 'Choose tender category (area you are working on) you want to be notified when a tender is posted around your chosen location:', {
+        reply_markup: {
+            inline_keyboard: categories.map(category => [{ text: category, callback_data: `categorynotif_${category}` }])
+        }
+    });
+}
 
 bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
@@ -305,25 +330,52 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
 
     if (data === "post_tender") {
-        botState[chatId].action = 'post_tender';
+        botState[chatId] = {action: 'post_tender'};
         bot.deleteMessage(chatId, messageId);
         promptRegion(chatId);
         bot.answerCallbackQuery(callbackQuery.id);
-
         return;
     }
 
     if (data === "main_menu") {
+        resetState(chatId);
         bot.deleteMessage(chatId, messageId);
         bot.answerCallbackQuery(callbackQuery.id);
         showMenu(chatId);
     }
 
+    if (data.startsWith("regionnotif_")) {
+        const region = data.split("_")[1];
+        bot.deleteMessage(chatId, messageId);
+        handleRegionForNotification(chatId, region);
+        bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    if (data.startsWith("categorynotif_")) {
+        const category = data.split("_")[1];
+        // Save the category to preferences or handle as needed
+        const preferenceService = new PreferenceService();
+        await preferenceService.createPreference({ chatId, subscriptionType: 'category', subscriptionValue: category });
+
+        bot.deleteMessage(chatId, messageId);
+        bot.answerCallbackQuery(callbackQuery.id);
+        bot.sendMessage(chatId, 'Your notification preferences have been saved.', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Main menu", callback_data: "main_menu" }]
+                ]
+            }
+        });
+        resetState(chatId);
+        return;
+    }
+
     if (data === "add_notification") {
         bot.deleteMessage(chatId, messageId);
         // handle add notification for 2 cases
-        botState[chatId].action = "add_notification";
-        console.log(callbackQuery);
+        botState[chatId]= {action: 'add_notification'};
+        promptRegionForNotification(chatId);
         bot.answerCallbackQuery(callbackQuery.id);
         return;
     }
@@ -361,8 +413,9 @@ bot.on('callback_query', async (callbackQuery) => {
         const savedTender = await new TenderService().addTender(tenderData);
 
         deletePrompt(chatId, callbackQuery.message.message_id);
-        requestApproval(getTenderMessage(chatId), chatId);
+        requestApproval(getTenderMessage(chatId), chatId, `${callbackQuery.message.chat.username}`);
         bot.sendMessage(chatId, "Your post has been submitted and waiting for approval")
+        resetState(chatId);
         return;
     }
 
@@ -376,19 +429,29 @@ bot.on('callback_query', async (callbackQuery) => {
         }
 
         const tenderMsg = `
-    **Tender Notification**
-    Region: ${tenderData.dataValues?.region}
-    Category: ${tenderData.dataValues?.category}
-    Owner Company: ${tenderData.dataValues?.ownerCompany}
-    Header: ${tenderData.dataValues?.header}
-    Description: ${tenderData.dataValues?.description}
-    Starting Bid: ${tenderData.dataValues?.startBid}
-    Closing Date: ${tenderData.dataValues?.closingDate}
-    Opening Date: ${tenderData.dataValues?.openingDate}
-    CPO Amount: ${tenderData.dataValues?.cpoAmount}
-    Footer: ${tenderData.dataValues?.footer}
-    Contact Info: ${tenderData.dataValues?.contactInfo}
-    `;
+        📢 **Tender Notification**
+        
+        **Region:** ${tenderData.dataValues?.region}
+        **Category:** ${tenderData.dataValues?.category}
+        
+        **Owner Company:** ${tenderData.dataValues?.ownerCompany}
+        
+        **Header:** ${tenderData.dataValues?.header}
+        
+        **Description:** 
+        ${tenderData.dataValues?.description}
+        
+        **Starting Bid:** ${tenderData.dataValues?.startBid}
+        **Closing Date:** ${tenderData.dataValues?.closingDate}
+        **Opening Date:** ${tenderData.dataValues?.openingDate}
+        **CPO Amount:** ${tenderData.dataValues?.cpoAmount}
+        
+        **Footer:** 
+        ${tenderData.dataValues?.footer}
+        
+        **Contact Info:** ${tenderData.dataValues?.contactInfo}
+        `;
+        await bot.sendMessage(ADMIN_USER_ID, "You have successfully approved this post");
         await sendTenderMessage(chatId, tenderMsg);
         deletePrompt(chatId, callbackQuery.message.message_id);
         return;
@@ -398,10 +461,11 @@ bot.on('callback_query', async (callbackQuery) => {
         bot.answerCallbackQuery(callbackQuery.id);
         deletePrompt(chatId, callbackQuery.message.message_id);
         bot.sendMessage(chatId, "Your post has been rejected");
+        resetState(chatId);
         return;
     }
 
-    if (botState[chatId].action === 'post_tender') {
+    if (botState[chatId]?.action === 'post_tender') {
         switch (getCurrentStep(chatId)) {
             case 'region':
                 botState[chatId].region = data;
