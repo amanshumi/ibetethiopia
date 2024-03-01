@@ -5,8 +5,10 @@ const TenderService = require("./service/tender");
 const CompanyService = require("./service/company");
 const PreferenceService = require("./service/preference");
 const BOT_API_KEY = "6502653610:AAFjAZDBjnezQ5akPLCHppAECIrHVkF-Kgg";
+const CHANNEL_ID = '@testchannelbottest';
+const CHANNEL_POST_ID = '-1002137610079';
 
-const bot = new TelegramBot(BOT_API_KEY,  { polling: {interval: 5000} });
+const bot = new TelegramBot(BOT_API_KEY, { polling: { interval: 5000 } });
 const ADMIN_USER_ID = "5038786699";
 
 const botState = {};
@@ -17,7 +19,7 @@ const regions = ['Addis Ababa', 'Afar', 'Amhara', 'Benishangul gumuz', 'Diredawa
 const categories = ['Accounting, finance and auditing', 'Printing, Advertising and promotion', 'Stationery materials', 'Agriculture and farming', 'Machinery and equipment', 'Architectural', 'Banking equipment and services', 'Building and warehouse', 'Chemicals and reagents', 'Medical equipment maintenance', 'Cleaning and janitorial equipment', 'Road, bridge and home construction', 'Building, warehouse and finishing materials', 'Water pipes, machinery and equipment', 'General consultancy', 'ICT and software', 'Networking', 'Electronics', 'Furniture', 'Installation and maintenance', 'Electro mechanical and electronics', 'Garment and leather', 'Medical equipment and pharmaceutical products', 'Vehicle and machinery', 'Sport materials and equipment’s'];
 
 const resetState = (chatId) => {
-    botState[chatId] = {action: ""}
+    botState[chatId] = { action: "" }
 }
 
 bot.onText(/\/start/, async (msg) => {
@@ -40,6 +42,40 @@ async function showMenu(chatId) {
     };
 
     await bot.sendMessage(chatId, 'Please select one of the following options to get started:', options);
+}
+
+async function sendNotification(chatId, messageId, msg) {
+    const message = msg;
+
+    // Get all preferences
+
+    const preferences = await new PreferenceService().getPreferenceByChatId(chatId);
+    const getPost = await new TenderService().getTenderByMessageId(messageId);
+
+    if(!getPost) {
+        console.log(getPost);
+        return;
+    }
+
+    if (getPost.dataValues?.chatId === chatId) {
+        console.log("posted by same chat id");
+        return;
+    }
+
+    // Check each preference
+    for (const preference of preferences) {
+        // Check if the post matches the preference
+        if (message.includes(preference?.region)) {
+            // Send a message to the user
+            // Send SMS Notification here
+            bot.sendMessage(preference?.chatId, "A new post matching your region has been posted. Check it out!");
+        }
+
+        if (message.includes(preference?.category)) {
+            // Send SMS Notification here
+            bot.sendMessage(preference?.chatId, "A new post matching your category has been posted. Check it out!");
+        }
+    }
 }
 
 bot.on('message', (msg) => {
@@ -179,7 +215,7 @@ function getTenderMessage(chatId) {
 
 async function sendTenderMessage(chatId, msg) {
     // Change the channel_id to the actual channel ID
-    const channel_id = '@testchannelbottest'; // Update this with your channel ID
+    const channel_id = CHANNEL_ID; // Update this with your channel ID
     bot.sendMessage(channel_id, msg);
     bot.sendMessage(chatId, "Your post has been approved.").then((responseSend) => {
         console.log("post approved")
@@ -197,51 +233,31 @@ function promptRegion(chatId) {
     });
 }
 
-function deletePrompt(chatId, messageId) {
-    bot.deleteMessage(chatId, messageId)
-        .catch(error => console.log('Error deleting message:', error));
-}
+async function deletePrompt(chatId, messageId) {
+    if (!messageId) return;
 
-function showBackButton(chatId, messageId) {
-    bot.editMessageText('Please select one of the following options to get started:', {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: {
-            keyboard: [['Back']],
-            resize_keyboard: true,
-            one_time_keyboard: true
-        }
-    });
+    await bot.deleteMessage(chatId, messageId)
+        .catch(error => console.log('Error deleting message:', error?.message));
 }
 
 const constructData = (chatId, messageId) => {
     const tenderData = {
         chatId: chatId,
         messageId: messageId,
-        region: botState[chatId].region,
-        category: botState[chatId].category,
-        ownerCompany: botState[chatId].ownerCompany,
-        header: botState[chatId].header,
-        description: botState[chatId].description,
-        startBid: botState[chatId].startBid,
-        closingDate: botState[chatId].closingDate,
-        openingDate: botState[chatId].openingDate,
-        cpoAmount: botState[chatId].cpoAmount,
-        footer: botState[chatId].footer,
-        contactInfo: botState[chatId].contactInfo
+        region: botState[chatId]?.region,
+        category: botState[chatId]?.category,
+        ownerCompany: botState[chatId]?.ownerCompany,
+        header: botState[chatId]?.header,
+        description: botState[chatId]?.description,
+        startBid: botState[chatId]?.startBid,
+        closingDate: botState[chatId]?.closingDate,
+        openingDate: botState[chatId]?.openingDate,
+        cpoAmount: botState[chatId]?.cpoAmount,
+        footer: botState[chatId]?.footer,
+        contactInfo: botState[chatId]?.contactInfo
     };
 
     return tenderData;
-}
-
-function removeShareContactButton(chatId, messageId) {
-    bot.editMessageReplyMarkup({
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: {
-            remove_keyboard: true
-        }
-    });
 }
 
 bot.on("polling_error", console.log);
@@ -262,8 +278,10 @@ async function handleCompanyRegister(chatId, message, msg, messageId) {
                     [{
                         text: 'Share Contact',
                         request_contact: true,
+
                     }]
                 ],
+                remove_keyboard: true,
                 resize_keyboard: true,
                 one_time_keyboard: true
             }
@@ -330,8 +348,8 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
 
     if (data === "post_tender") {
-        botState[chatId] = {action: 'post_tender'};
-        bot.deleteMessage(chatId, messageId);
+        botState[chatId] = { action: 'post_tender' };
+        deletePrompt(chatId, messageId);
         promptRegion(chatId);
         bot.answerCallbackQuery(callbackQuery.id);
         return;
@@ -339,14 +357,14 @@ bot.on('callback_query', async (callbackQuery) => {
 
     if (data === "main_menu") {
         resetState(chatId);
-        bot.deleteMessage(chatId, messageId);
+        deletePrompt(chatId, messageId);
         bot.answerCallbackQuery(callbackQuery.id);
         showMenu(chatId);
     }
 
     if (data.startsWith("regionnotif_")) {
         const region = data.split("_")[1];
-        bot.deleteMessage(chatId, messageId);
+        deletePrompt(chatId, messageId);
         handleRegionForNotification(chatId, region);
         bot.answerCallbackQuery(callbackQuery.id);
         return;
@@ -358,7 +376,7 @@ bot.on('callback_query', async (callbackQuery) => {
         const preferenceService = new PreferenceService();
         await preferenceService.createPreference({ chatId, subscriptionType: 'category', subscriptionValue: category });
 
-        bot.deleteMessage(chatId, messageId);
+        deletePrompt(chatId, messageId);
         bot.answerCallbackQuery(callbackQuery.id);
         bot.sendMessage(chatId, 'Your notification preferences have been saved.', {
             reply_markup: {
@@ -372,9 +390,9 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 
     if (data === "add_notification") {
-        bot.deleteMessage(chatId, messageId);
+        deletePrompt(chatId, messageId);
         // handle add notification for 2 cases
-        botState[chatId]= {action: 'add_notification'};
+        botState[chatId] = { action: 'add_notification' };
         promptRegionForNotification(chatId);
         bot.answerCallbackQuery(callbackQuery.id);
         return;
@@ -385,11 +403,11 @@ bot.on('callback_query', async (callbackQuery) => {
         // handle company registration
         // check company existence before registering
         bot.answerCallbackQuery(callbackQuery.id);
-        bot.deleteMessage(chatId, messageId);
+        deletePrompt(chatId, messageId);
         const checkCompanyExists = await new CompanyService().getCompanyByChatId(chatId);
 
         if (checkCompanyExists) {
-            await bot.deleteMessage(chatId, messageId)
+            deletePrompt(chatId, messageId)
             await bot.sendMessage(chatId, "Your company already exists.", {
                 reply_markup: {
                     inline_keyboard: [
@@ -410,6 +428,10 @@ bot.on('callback_query', async (callbackQuery) => {
         // construct tender and save to db
         messageIdForQuery = messageId;
         const tenderData = constructData(chatId, messageId);
+        if (!tenderData?.region) {
+            return;
+        }
+
         const savedTender = await new TenderService().addTender(tenderData);
 
         deletePrompt(chatId, callbackQuery.message.message_id);
@@ -453,7 +475,11 @@ bot.on('callback_query', async (callbackQuery) => {
         `;
         await bot.sendMessage(ADMIN_USER_ID, "You have successfully approved this post");
         await sendTenderMessage(chatId, tenderMsg);
+
+        //update the msgId so that we could later use that msgId to send notification to the subscriber
+        await new TenderService().updateTender({messageId: messageId}, tenderData.dataValues?.id);
         deletePrompt(chatId, callbackQuery.message.message_id);
+        sendNotification(chatId, callbackQuery.message.message_id, tenderMsg);
         return;
     }
 

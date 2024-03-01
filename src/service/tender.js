@@ -22,6 +22,14 @@ class TenderService{
         return await Tender.create(data);
     }
 
+    async updateTender(data, id) {
+        return await Tender.update(data, {
+            where: {
+                id: id
+            }
+        })
+    }
+
     async deleteTender(id) {
         return await Tender.destroy({
             where: {

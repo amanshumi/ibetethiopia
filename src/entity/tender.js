@@ -33,7 +33,7 @@ const Tender = sequelize.define('Tender', {
     allowNull: false
   },
   description: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT,
     allowNull: false
   },
   startBid: {

@@ -22,11 +22,10 @@ class PreferenceService {
         } else { return await Preference.create(data); }
     }
 
-    async getPreferenceByChatId(chatId, subscriptionType) {
-        return await Preference.findOne({
+    async getPreferenceByChatId(chatId) {
+        return await Preference.findAll({
             where: {
-                chatId: chatId,
-                subscriptionType: subscriptionType
+                chatId: chatId
             }
         })
     }
